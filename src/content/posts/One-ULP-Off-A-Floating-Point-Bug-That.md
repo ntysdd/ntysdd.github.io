@@ -274,9 +274,9 @@ rare enough to survive casual testing, common enough that a 100,000-line fuzz fi
 For `0.935469305050944`:
 
 * The correctly rounded `double` is `0x1.def5d52f36181p-1`.
-* The two candidate doubles are `0x1.def5d52f36180p-1` and `0x1.def5d52f36181p-1`; their
-  midpoint is exactly 2^-53 below the correct value.
-* The exact decimal value lies just **8.4 × 10⁻⁵ half-ULPs above that midpoint** (about
+* The two candidate doubles are `0x1.def5d52f36180p-1` and `0x1.def5d52f36181p-1`, one ULP
+  (2^-53) apart, so their midpoint is half an ULP (2^-54) below the correct value.
+* The exact decimal value lies just **8.4 × 10⁻⁵ ULP above that midpoint** (about
   9.3 × 10⁻²¹, far below what a 53-bit mantissa can represent).
 * Rounding it to an 80-bit `long double` (64-bit mantissa) is *correct*, and it lands
   **exactly on the midpoint**. The value calculated by `strtold` here is
@@ -290,7 +290,7 @@ information* the second rounding needed. This is why double rounding is such a n
 of bug: each step is individually correct.
 
 Sixty-four bits of intermediate precision is not "more than enough to round to 53 bits".
-It is enough *in the overwhelming majority of cases*, and wrong in about 1 in 10⁻⁵ of them.
+It is enough *in the overwhelming majority of cases*, and wrong in about 1 in 10⁵ of them.
 
 ## Meanwhile, the CRT I blamed really is inaccurate
 
@@ -350,18 +350,18 @@ And the defect itself is a symptom of a genuinely awkward interface rather than
 carelessness. GCC on Windows keeps 80-bit `long double`, a deliberate and good choice for
 numerics; `msvcrt.dll` knows only 64-bit `long double`. Any stdio layer that has to bridge
 32-, 64- and 80-bit floating point onto a runtime that supports a subset of them will have
-corners like this one. Encouragingly, the correctly-rounded `strtod` that the report asks
-for is already in the same library, so the fix is close at hand.
+corners like this one. Encouragingly, the `__mingw_strtod` that the report asks for is
+already in the same library, so the fix is close at hand.
 
 So, in order of who deserves it: thank you first to the MinGW-w64 maintainers. **Kai Tietz**
 has been with the project since it was forked off the original MinGW in 2007, and a long
-list of other people have kept it going since. Between them they maintain a from-scratch
-C99 stdio implementation, a correctly-rounded `strtod` and several hundred other pieces,
-mostly for free, so that the rest of us can just compile C. One of the older pieces, the C99
-printf engine (`mingw_pformat.c`), is credited to **Keith Marshall** and dates back to the
-original MinGW project's stdio work. The scanf path that bit me is a sibling file, and I am
-not going to go digging for whose line that was; the 80-bit intermediate is the problem, not
-the person.
+list of other people have kept it going since. Between them they maintain a C99 stdio
+implementation and several hundred other pieces, mostly for free, so that the rest of us can
+just compile C. Much of that code is older than the project itself, and the people who wrote
+it are worth naming: the printf engine (`mingw_pformat.c`) is **Keith Marshall**'s, from the
+original MinGW project, and MinGW-w64's `strtod` is a wrapper around **David Gay**'s `dtoa`
+(`__strtodg`). The scanf path that bit me is a sibling file, and I am not going to go digging
+for whose line that was.
 
 And then [Chris Wellons](https://nullprogram.com/), whose
 [w64devkit](https://github.com/skeeto/w64devkit) is a self-contained toolchain you can
@@ -387,11 +387,11 @@ a `double` parser is wrong for a small fraction of inputs.)
 Ryu, `fast_float`, or an exact big-integer-based conversion. On modern MSVC, the UCRT
 rewrote `printf`/`scanf`/`strtod` specifically because the old ones were not correctly
 rounded, and that rewrite is a good reason to prefer UCRT over `msvcrt.dll` when you can
-insist on Vista or later. When you cannot — that is why I was here — bring your own parser.
-in C++, `std::from_chars` is correctly rounded in the MSVC STL and is what the `testlib`
-report switched to. And note that switching the stdio shim off
-(`-D__USE_MINGW_ANSI_STDIO=0`) does not solve this: it returns you to the CRT's own parser,
-which is faster and equally unreliable, just wrong on different inputs.
+insist on Vista or later. When you cannot (which is why I was here), bring your own parser.
+In C++, the `testlib` thread's suggested way out is `std::from_chars`, if you have C++17.
+And note that switching the stdio shim off (`-D__USE_MINGW_ANSI_STDIO=0`) does not solve
+this: it returns you to the CRT's own parser, which is equally unreliable, just wrong on
+different inputs.
 
 **Keep a two-implementation cross-check in your tests.** `sscanf` vs `strtod` on
 round-trippable strings found this in under a minute after half a day of reading code. It costs
