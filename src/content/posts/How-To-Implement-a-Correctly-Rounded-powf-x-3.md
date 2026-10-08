@@ -2,6 +2,7 @@
 title: "How To Implement a Correctly-rounded powf(x, 3)"
 author: ntysdd
 pubDatetime: 2026-10-08T08:02:33Z
+modDatetime: 2026-10-08T09:53:54Z
 description: |
  `x * x * x` is wrong for about 8.5% of all positive finite float32 inputs, while there actually is an easy way
  to implement a correctly-rounded one.
@@ -72,6 +73,12 @@ x         = 1.000141f
 x * x * x = 1.0004231f
 correct   = 1.0004232f    <- one ulp up
 ```
+
+This is the tradeoff behind a rewrite compilers do when the call is marked fast: `pow(x, 3)`
+becomes `x * x * x`, and `(x*x)*x` has an extra rounding step. It came up on
+[llvm-dev](https://lists.llvm.org/pipermail/llvm-dev/2017-January/108942.html) in 2017, where
+Steve Canon measured, for single-precision `x` in `[1, 2)`, a worst-case relative error of 1.29 ulp for
+`x*x*x` against 0.500013 ulp for `powf(x, 3)`.
 
 ## The version that is unexpectedly right
 
