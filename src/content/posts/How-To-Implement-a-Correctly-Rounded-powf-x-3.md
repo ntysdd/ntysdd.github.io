@@ -2,7 +2,7 @@
 title: "How To Implement a Correctly-rounded powf(x, 3)"
 author: ntysdd
 pubDatetime: 2026-10-08T08:02:33Z
-modDatetime: 2026-10-08T09:53:54Z
+modDatetime: 2026-10-08T10:01:14Z
 description: |
  `x * x * x` is wrong for about 8.5% of all positive finite float32 inputs, while there actually is an easy way
  to implement a correctly-rounded one.
@@ -118,7 +118,7 @@ about double as well:
 |---|---|---|---|
 | float | `x * x * x` | two, at 24 bits | 8.54% |
 | float | `(float)((double)x * x * x)` | one at 53 bits, then one at 24 bits: **safe** (53 >= 50) | 0 |
-| double | `x * x * x` | two, at 53 bits | 25.6% (sampled) |
+| double | `x * x * x` | two, at 53 bits | 25.7% (sampled) |
 
 That last row is the interesting one. If you are targeting double, `x * x * x` is *not*
 correctly rounded.
