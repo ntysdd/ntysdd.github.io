@@ -2,7 +2,7 @@
 title: "One in 2^62: When `(int)(x + 0.5)` Rounds the Wrong Way"
 author: ntysdd
 pubDatetime: 2026-10-09T09:12:41Z
-modDatetime: 2026-10-21T15:57:23Z
+modDatetime: 2026-10-21T16:06:31Z
 description: |
  `(int)(x + 0.5)` returns the wrong integer for exactly one non-negative double whose cast to
  `int` is defined, and for four million non-negative floats. The `long long` version is wrong for
@@ -308,8 +308,8 @@ exactly an integer. The half-integers come out right:
 
 `(int)(x + 0.5)` equals `floor(x + 0.5)` for `x >= -0.5`, and also at the half-integers below it.
 And even `floor(x + 0.5)` is round-half-up (ties toward `+∞`), not the round-half-away-from-zero
-that "四舍五入" means in Chinese and that C's `round()` and Fortran's `NINT` implement: half-up
-sends `-2.5` to `-2`, while `round()` sends it to `-3`.
+that school arithmetic usually means by rounding and that C's `round()` and Fortran's `NINT`
+implement: half-up sends `-2.5` to `-2`, while `round()` sends it to `-3`.
 
 **The cast is undefined out of range.** `x + 0.5 >= 2^31` is undefined behavior, not a
 saturating conversion; that is the UB rows in the tables above. On x86-64 what you actually get
