@@ -1,7 +1,8 @@
 ---
 title: "One in 2^62: When `(int)(x + 0.5)` Rounds the Wrong Way"
 author: ntysdd
-pubDatetime: 2026-10-09T14:09:41Z
+pubDatetime: 2026-10-09T09:12:41Z
+modDatetime: 2026-10-21T14:44:35Z
 description: |
  `(int)(x + 0.5)` returns the wrong integer for exactly one non-negative double whose cast to
  `int` is defined, and for four million non-negative floats. The `long long` version is wrong for
@@ -13,19 +14,19 @@ tags:
 ---
 
 > **The short version.** `(int)(x + 0.5)` is wrong for `0.49999999999999994` (it returns `1`)
-> and for four million floats. It is also wrong for negative `x` below `-0.5`, because `(int)`
-> truncates where it should floor. `(long long)(x + 0.5)` is wrong for `2^51` doubles in
-> `[2^52, 2^53)`, which a nanosecond counter enters after about 52 days and leaves 52 days
-> later. `lround` never adds at all; the C runtime GCC links on Windows is the exception, and it
-> gets this input wrong too.
+> and for four million floats. It is also wrong for every negative `x` below `-0.5` that is not a
+> half-integer, because `(int)` truncates where it should floor. `(long long)(x + 0.5)` is wrong
+> for `2^51` doubles in `[2^52, 2^53)`, which a nanosecond counter enters after about 52 days and
+> leaves 52 days later. `lround` never adds at all; some Windows toolchains link a copy that is
+> not exact, and it gets this input wrong too.
 
 `(int)(x + 0.5)` is how you round without calling a library. C89 had no `round`, and FORTRAN 66
 had no nearest-integer intrinsic until FORTRAN 77 added `NINT`, which probably explains why the
-idiom turns up in old Fortran too; `NINT` itself was specified as `INT(A + 0.5)` for positive `A`,
+idiom turns up in old Fortran too. `NINT` itself was specified as `INT(A + 0.5)` for positive `A`,
 and it took J3 interpretation 000012 to rule that such wording describes the result rather than
-requiring the computation. Nothing below is C-specific: the
-languages differ, but each of them hands you a truncating conversion, and the failures depend on
-whether the value is a `float` or a `double` and on the precision the addition is evaluated in.
+requiring the computation. Nothing below is C-specific: the languages differ, but each of them
+hands you a truncating conversion, and the failures depend on whether the value is a `float` or a
+`double` and on the precision the addition is evaluated in.
 
 The canonical counterexample is `x = 0.49999999999999994`:
 
@@ -155,7 +156,7 @@ That is the one case in this table where the widening happens on its own. A `flo
 significand bits, so in double `x + 0.5` is exact wherever the answer depends on it: near `0.5`
 the sum needs 25 bits, and in the `ulp == 1` binade it needs 25 as well, well inside 53. For very
 small `x` the double sum can still round (`x = 2^-31 + 2^-54` does) but the error is at most
-`2^-54` while the nearest integer boundary is `0.5` away, so the cast never notices. C's
+`2^-54` while the nearest integer boundary is `0.5` away, so the cast result is unaffected. C's
 promotion rule makes that the default spelling, which is why so much `float` code using this
 idiom works.
 
@@ -258,10 +259,11 @@ s = x + 0.5;                    /* == x */
 (long long)s;                   /* correct */
 ```
 
-The two failure mechanisms are one mechanism. In both, the exact sum lands exactly halfway
-between two representable values and round-half-to-even settles it: below `0.5` the tie is
-between `1 - 2^-53` and `1`, and in the `ulp == 1` binade it is between `x` and `x + 1`. `0.5`
-being exactly representable is what makes the tie reachable at all.
+Both mechanisms are ties. In both, the exact sum lands exactly halfway between two representable
+values and round-half-to-even settles it: below `0.5` the tie is between `1 - 2^-53` and `1`, and
+in the `ulp == 1` binade it is between `x` and `x + 1`. `0.5` can produce both because it is an
+exact multiple of the spacing just below it, `2^-54`, and exactly half the spacing in the
+`ulp == 1` binade.
 
 ## Wider intermediates
 
@@ -340,25 +342,50 @@ not a drop-in; pick it when ties-to-even is what you actually want. The `l*` var
 `FE_INVALID` and return an unspecified value when the result does not fit their integer type;
 `rint` and `nearbyint` return a floating-point value, so they cannot overflow at all.
 
-There is a catch, and it is the same bit all over again. The C runtime that GCC links on Windows
-implements `round` as `ceil(x)` followed by a distance test, `if (ceil(x) - x > 0.5)`, and that
-distance needs the very `2^-54` the addition destroyed: for `x = 0.5 - 2^-54` the exact value of
-`ceil(x) - x` is `0.5 + 2^-54`, which rounds to exactly `0.5`, so the test fails and the answer
-stays `1`. Measured on Windows 10.0.26300 with MinGW-w64 GCC 13.2, on a value read at runtime:
+There is a catch, and it is the same bit all over again. Whether `round` is exact depends on which
+implementation the linker picks, and on Windows that varies by toolchain. mingw-w64 ships one of
+its own, in `libmingwex.a` in older releases and in the `msvcrt`-compatibility archives in newer
+ones:
 
-```
-round   (0x1.fffffffffffffp-2) = 1     lround   = 1     llround = 1
-roundf  (0x1.fffffep-2f)       = 1     lroundf  = 1
-rint    (0x1.fffffffffffffp-2) = 0     nearbyint = 0   lrint   = 0
+```c
+double round (double x)
+{
+  double res;
+  if (x >= 0.0)
+    { res = ceil (x); if (res - x > 0.5) res -= 1.0; }
+  else
+    { res = ceil (-x); if (res + x > 0.5) res -= 1.0; res = -res; }
+  return res;
+}
 ```
 
-The same build's `ucrtbase.dll`, called through `GetProcAddress`, returns `0` for all of them, so
-this is one CRT's arithmetic rather than the platform's. It is also invisible to the obvious test:
-GCC folds `round` of a literal with exact arithmetic and prints `0`, so only a value arriving at
-runtime reaches the wrong path. The `rint` family survives because it is what the hardware
-computes directly, and `roundsd` has no ties-away mode; building ties-away out of other operations
-is where a second rounding gets its chance. gfortran's `NINT` on this platform is a call to that
-same `lround`, so it returns `1` as well.
+The distance test needs the very `2^-54` the addition destroyed: for `x = 0.5 - 2^-54` the exact
+value of `ceil(x) - x` is `0.5 + 2^-54`, which rounds to exactly `0.5`, so `> 0.5` is false and
+the answer stays `1`. Three toolchains on one machine, with `round` called through a function
+pointer on a value read at runtime:
+
+| compiler suite | imports | `round` binds to | `round(0x1.fffffffffffffp-2)` |
+|---|---|---|---|
+| MinGW-w64 GCC 13.2 | `api-ms-win-crt-*` | `libmingwex.a`'s `round.o` | **1** |
+| w64devkit GCC 16.1.0 | `msvcrt.dll` | `libmsvcr100.a`'s `round.o` | **1** |
+| MinGW-w64 GCC 16.1.0 | `api-ms-win-crt-*` | `ucrtbase.dll` import | 0 |
+| `ucrtbase.dll`, via `GetProcAddress` | — | — | 0 |
+
+The two UCRT builds import the same CRT DLLs and still disagree, so the flavour of the toolchain is
+not the variable. `round` is a library symbol rather than anything the compiler generates, and the
+link is what chose; constant folding is exact in all four, so `round` of a literal prints `0` and
+only a value arriving at runtime reaches the library. `rint`, `nearbyint` and `lrint` are `0` on
+all four paths, because they are what the hardware computes directly and `roundsd` has no ties-away
+mode; building ties-away out of other operations is where a second rounding gets its chance.
+gfortran 13.2 from the first toolchain lowers `NINT` for `double` to a call to `lround`, so it
+returns `1` as well.
+
+The same archive has done this before: its `__mingw_sscanf`, which an ordinary `-std=gnu23` build
+redirects every `scanf` call to, parses `%lf` through 80-bit `long double` and comes back one ULP
+low for `0.935469305050944`, which is the bug behind
+[One ULP Off](/posts/one-ulp-off-a-floating-point-bug-that). Two weeks, two unrelated functions,
+the same library, and the same mistake on my side both times: assuming the name in the source is
+the code that runs, when `libmingwex.a` had replaced it.
 
 If the libm call is off limits, add the double just below `0.5` instead of `0.5`:
 
@@ -402,7 +429,8 @@ Measured behaviour of the four candidates, for reference:
 | `lround(x)` / `round(x)` | 0* | -3 | half-away-from-zero |
 | `lrint(x)` / `rint(x)` | 0 | -2 | half-to-even |
 
-`*` glibc and Microsoft's UCRT. MinGW-w64's own CRT returns `1` here; see above.
+`*` glibc, and every Windows toolchain that binds `round` to `ucrtbase.dll`. Some MinGW-w64 builds
+link their own; see above.
 
 Other languages have largely reached the same conclusion:
 
@@ -421,7 +449,7 @@ Other languages have largely reached the same conclusion:
   and `ANINT` as "the integer nearest `A`". J3's own example of the failure was
   `ANINT(16000001.0)` evaluating to `16000002.0`, which is the `ulp == 1` mechanism above. The
   implementation is where the bug returns: gfortran 13.2 on Windows lowers `NINT` for `double` to
-  a call to that CRT's `lround`, and inherits it.
+  a call to `lround`, so it inherits whatever that does.
 
 All four specify the answer and leave the computation to the implementation. It is also worth
 deciding which rounding you mean before writing the code: half-up, half-even and
@@ -514,8 +542,9 @@ sampling over `[0, 2^31)` finds nothing, which is expected and is not evidence: 
   `[0, 2^31)` (zero wrong) and `(long long)(x + 0x1.fffffffffffffp-2)` over the same exact
   window analysis up to `2^63` (no non-empty window).
 * **the library functions**: `rint`/`nearbyint`/`lrint` and `round`/`lround` were measured on
-  Windows 10.0.26300 (MinGW-w64 GCC 13.2) both with compile-time constants and with values read at
-  runtime, and against `ucrtbase.dll` through `GetProcAddress`. The three paths disagree, so only
-  the runtime numbers are reported above.
+  Windows 10.0.26300 with three GCC suites (MinGW-w64 13.2, w64devkit 16.1.0, MinGW-w64 16.1.0),
+  using values read at runtime, function pointers so that nothing is inlined, and `GetProcAddress`
+  against `ucrtbase.dll`. The four paths disagree, so only the runtime numbers are reported above,
+  together with which symbol each link chose.
 * Cross-checks against the hardware in C (GCC 13, x86-64, UCRT), Java 25, V8, CPython, gfortran
   13.2.
