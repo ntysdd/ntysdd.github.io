@@ -2,7 +2,7 @@
 title: "One in 2^62: When `(int)(x + 0.5)` Rounds the Wrong Way"
 author: ntysdd
 pubDatetime: 2026-10-09T09:12:41Z
-modDatetime: 2026-10-21T14:44:35Z
+modDatetime: 2026-10-21T15:57:23Z
 description: |
  `(int)(x + 0.5)` returns the wrong integer for exactly one non-negative double whose cast to
  `int` is defined, and for four million non-negative floats. The `long long` version is wrong for
@@ -13,12 +13,11 @@ tags:
 
 ---
 
-> **The short version.** `(int)(x + 0.5)` is wrong for `0.49999999999999994` (it returns `1`)
-> and for four million floats. It is also wrong for every negative `x` below `-0.5` that is not a
-> half-integer, because `(int)` truncates where it should floor. `(long long)(x + 0.5)` is wrong
-> for `2^51` doubles in `[2^52, 2^53)`, which a nanosecond counter enters after about 52 days and
-> leaves 52 days later. `lround` never adds at all; some Windows toolchains link a copy that is
-> not exact, and it gets this input wrong too.
+> `(int)(x + 0.5)` is wrong for `0.49999999999999994` (it returns `1`) and for four million
+> floats. It is also wrong for every negative `x` below `-0.5` that is not a half-integer, because
+> `(int)` truncates where it should floor. `(long long)(x + 0.5)` is wrong for `2^51` doubles in
+> `[2^52, 2^53)`, which a nanosecond counter enters after about 52 days and leaves 52 days later.
+> `lround` returns `0` for the boundary input; some Windows toolchains link a copy that does not.
 
 `(int)(x + 0.5)` is how you round without calling a library. C89 had no `round`, and FORTRAN 66
 had no nearest-integer intrinsic until FORTRAN 77 added `NINT`, which probably explains why the
@@ -85,10 +84,9 @@ truncation cares about.
 the default round-to-nearest, `(int)(x + 0.5)` disagrees with `floor(x + 0.5)` at exactly one
 value.
 
-The reason takes three steps, and the only quantity that matters is `ulp(x)`, the spacing
-between adjacent doubles at `x`. Inside `int` range that spacing is below `1` everywhere
-(`ulp(x) >= 1` needs `x >= 2^52`), so `x + 0.5` is exact whenever the sum stays on the grid
-that `x` sits on.
+The only quantity that matters is `ulp(x)`, the spacing between adjacent doubles at `x`. Inside
+`int` range that spacing is below `1` everywhere (`ulp(x) >= 1` needs `x >= 2^52`), so `x + 0.5`
+is exact whenever the sum stays on the grid that `x` sits on.
 
 1. If `x` and `x + 0.5` sit in the same *binade* (the stretch between two consecutive powers of
    two, where the spacing is constant), then `0.5` is an exact multiple of `ulp(x)` and the sum
@@ -98,9 +96,9 @@ that `x` sits on.
    at most half a spacing (`2^-23` or less inside `int` range). For `j <= -2` the sum is below
    `0.75` and the next integer is out of reach.
 3. That leaves `j = -1`: the sum lands in `[0.5, 1)`. To be rounded up to `1` it has to reach
-   `1 - 2^-54`, the midpoint of that binade, and no double can hold that midpoint; that is the
-   whole problem. Exactly one `x` produces it: `0.5 - 2^-54`, the last double before `0.5`. The
-   tie goes to even, so the sum becomes `1.0`.
+   `1 - 2^-54`, the midpoint of that binade, and no double can hold that midpoint. Exactly one
+   `x` produces it: `0.5 - 2^-54`, the last double before `0.5`. The tie goes to even, so the sum
+   becomes `1.0`.
 
 So `x = 0.5 - 2^-54` is the only input that reaches step 3. The same three steps work for any
 significand width, which is why the `float` count is different but comes from the same place.
@@ -128,9 +126,9 @@ equally well known: [JDK-6430675](https://bugs.openjdk.org/browse/JDK-6430675), 
 the [Stack Overflow thread](https://stackoverflow.com/questions/9902968/) that connects them.
 
 The mechanisms above are also all of them, which is the claim I have not found in print, and why
-the argument is spelled out instead of cited. The case analysis also runs as code, in exact
-rational arithmetic over every binade up to `2^31`, and it finds one non-empty window; both
-versions are in [Appendix A](#appendix-a-the-case-split-in-full). If someone has written the
+the argument is spelled out instead of cited. The same case analysis also runs in exact rational
+arithmetic, over every binade up to `2^31`, and it finds one non-empty window; the details are in
+[Appendix A](#appendix-a-the-case-split-in-full). If someone has written the
 enumeration up, I would like the reference.
 
 ## Changing `x` to `float`
@@ -192,15 +190,15 @@ That is `2^22 + 1`: one input at the binade edge, `2^22` in the integer range.
 
 The interesting range is the one binade where `ulp(x)` is exactly `1`.
 
-**Overflow is a non-issue.** Under round-to-nearest, `DBL_MAX + 0.5` rounds straight back to
-`DBL_MAX`: the exact sum would have to reach `DBL_MAX + 2^970` to overflow, and `0.5` is smaller
-than that gap by almost three hundred decimal orders of magnitude. Directed rounding is the only
-way to get an infinity out of this idiom, and it is a real concern if you implement interval
-arithmetic, but `x` has to be within an ulp of `DBL_MAX` for it to happen. (`inf` and `NaN`
-inputs propagate, and then the cast is undefined anyway.) The measurement is in
+The obvious hazard is overflow, and under round-to-nearest it does not happen: `DBL_MAX + 0.5`
+rounds straight back to `DBL_MAX`, since the exact sum would have to reach `DBL_MAX + 2^970` to
+overflow and `0.5` is smaller than that gap by almost three hundred decimal orders of magnitude.
+Directed rounding is the only way to get an infinity out of this idiom, and it is a real concern if
+you implement interval arithmetic, but `x` has to be within an ulp of `DBL_MAX` for it to happen.
+(`inf` and `NaN` inputs propagate, and then the cast is undefined anyway.) The measurement is in
 [Appendix B](#appendix-b-how-this-was-checked).
 
-**A vanished addition is not a failure.** If `ulp(x) >= 2` then `x` is already an integer and
+The subtler hazard is the opposite one. If `ulp(x) >= 2` then `x` is already an integer and
 `round(x) == x`, so adding nothing and truncating to `x` is correct. What breaks is the single
 binade where the addition does exactly *half* of something.
 
@@ -274,18 +272,22 @@ With 64 bits of significand, `1 - 2^-54` is representable and the cast sees it:
 ```
 
 That is why x87 looks like a rescue. On 32-bit x86 with x87, `FLT_EVAL_METHOD` is 2 and `double`
-expressions are evaluated in 80-bit registers, so the addition really does happen at 80 bits.
-It does not help, because the cast forces a store back to `double` first:
+expressions are evaluated in 80-bit registers, so the addition really does happen at 80 bits. That
+is not a rescue, because nothing obliges the compiler to keep the extra bits until the conversion.
+GCC 13.2 on x86-64 with `-mfpmath=387` spends them on a store, at `-O0` and at `-O2` alike:
 
 ```
-fadd    QWORD PTR .LC0[rip]     ; + 0.5, at 80 bits: exact
-fstp    QWORD PTR 8[rsp]        ; store back as a double: 2^-54 is gone
-cvttsd2si eax, QWORD PTR 8[rsp]
+fldl    8(%rsp)
+fadds   .LC0(%rip)              ; + 0.5, added at 80 bits: exact
+fstpl   8(%rsp)                 ; back to a double: 2^-54 is gone
+cvttsd2sil 8(%rsp), %eax
 ```
 
-Measured under `-mfpmath=387` with GCC 13: `FLT_EVAL_METHOD=2`, `(int)(x+0.5) = 1`. Extra
-precision only helps if it survives to the point where the information is consumed, and a
-conversion to `int` is exactly where the compiler is entitled to narrow first.
+`(int)(x+0.5)` is `1` on that code, at `-O0` and at `-O2`. Truncating the 80-bit sum directly
+instead would give `0`, so the answer here is a codegen detail rather than a guarantee. Extra
+precision helps only if it survives to the point where the information is consumed, and the
+conversion to `int` is where the compiler is free to narrow first. (The `0.5L` version above is
+different: both operands are `long double`, and that one does return `0`.)
 
 This is also why the `q >= 2p + 2` rule from my `powf(x, 3)` post does not apply: it protects a
 value from being rounded a second time, and here a single rounding already destroys the bit the
@@ -326,8 +328,8 @@ wide enough to express those bounds.
 
 ## What to write instead
 
-If you want round-half-away-from-zero, the library already has it, correctly rounded and without
-an addition:
+If you want round-half-away-from-zero, the library already has it, and you do not have to write an
+addition yourself:
 
 ```c
 #include <math.h>
@@ -371,14 +373,14 @@ pointer on a value read at runtime:
 | MinGW-w64 GCC 16.1.0 | `api-ms-win-crt-*` | `ucrtbase.dll` import | 0 |
 | `ucrtbase.dll`, via `GetProcAddress` | — | — | 0 |
 
-The two UCRT builds import the same CRT DLLs and still disagree, so the flavour of the toolchain is
-not the variable. `round` is a library symbol rather than anything the compiler generates, and the
-link is what chose; constant folding is exact in all four, so `round` of a literal prints `0` and
-only a value arriving at runtime reaches the library. `rint`, `nearbyint` and `lrint` are `0` on
-all four paths, because they are what the hardware computes directly and `roundsd` has no ties-away
-mode; building ties-away out of other operations is where a second rounding gets its chance.
-gfortran 13.2 from the first toolchain lowers `NINT` for `double` to a call to `lround`, so it
-returns `1` as well.
+The two UCRT builds import `api-ms-win-crt-*` and still disagree, which rules out the flavour of the
+toolchain as the explanation. `round` is a library symbol rather than anything the compiler
+generates, and the link is what chose; constant folding is exact in all four, so `round` of a
+literal prints `0` and only a value arriving at runtime reaches the library. `rint`, `nearbyint`
+and `lrint` are `0` on all four paths, because they are what the hardware computes directly and
+`roundsd` has no ties-away mode; building ties-away out of other operations is where a second
+rounding gets its chance. gfortran 13.2 from the first toolchain lowers `NINT` for `double` to a
+call to `lround`, so it returns `1` as well.
 
 The same archive has done this before: its `__mingw_sscanf`, which an ordinary `-std=gnu23` build
 redirects every `scanf` call to, parses `%lf` through 80-bit `long double` and comes back one ULP
@@ -502,8 +504,8 @@ The argument never used the width of the significand, only where `2^j` stops bei
 and how fine the grid is below `0.5`. That is why the same machinery produces a different count
 for `float`.
 
-The case analysis is also code. For each of the 1105 binades from the subnormals up to `2^31`,
-the candidate window is computed in exact rational arithmetic and intersected with the set of
+The case analysis also runs as a program: for each binade from the subnormals up to `2^31`, the
+candidate window is computed in exact rational arithmetic and intersected with the set of
 representable inputs. Not sampled, intersected:
 
 ```
