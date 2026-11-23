@@ -2,6 +2,7 @@
 title: "Two NaNs, One Expression: The Bits Nobody Promised"
 author: ntysdd
 pubDatetime: 2026-11-23T16:41:00Z
+modDatetime: 2026-11-23T17:18:00Z
 description: |
  `0.0 / 0.0` gives one NaN when `javac` folds it and a different one when the CPU divides it, on the
  same JVM. The JVM spec leaves the bit pattern to the hardware and IEEE 754 does not specify it either,
@@ -23,7 +24,7 @@ bits differed. No finite value was wrong, nothing was one ulp off. Two implement
 answer was not a number and disagreed about which not-a-number it was.
 
 My first guess was that I had mistranslated one of CORE-MATH's NaN-producing paths, something like
-`0.0 / 0.0`, and was looking at my own bug through too many layers. It was not my bug. The first thing
+`0.0 / 0.0`, and was looking at my own bug through too many layers. It was not my bug: the first thing
 that told me so had nothing to do with CORE-MATH.
 
 ## Two NaNs from one line
@@ -68,6 +69,10 @@ NaN value, and which bit pattern carries it is left to whatever produced the val
 The API keeps the same two questions apart: `floatToIntBits` canonicalizes, `floatToRawIntBits` does
 not. My harness wanted to know whether the value was the same and reached for the second one.
 
+None of this is new to anyone who went looking. A [2012 Stack Overflow
+question](https://stackoverflow.com/questions/11008755/confusion-on-nan-in-java) sets the same two
+cases against each other, one folded and one divided through a local, and gets the same disagreement.
+
 Both patterns were legitimately NaN, and neither my port nor `javac` had done anything wrong. That let
 me relax a little.
 
@@ -82,9 +87,9 @@ was promising. IEEE 754-2019 separates two cases that the harness had merged:
 
 My failures were of the second kind: `0.0 / 0.0` has no NaN input whose payload could be propagated, so
 the standard says nothing about which NaN comes out. Even the first case is less settled than it looks;
-the working group's own
-[background note on payload propagation](https://grouper.ieee.org/groups/msc/ANSI_IEEE-Std-754-2019/background/nan-propagation.pdf)
-describes it as "uncertain and not fully standardized."
+a [background note on payload propagation](https://grouper.ieee.org/groups/msc/ANSI_IEEE-Std-754-2019/background/nan-propagation.pdf)
+by Agner Fog, posted on the IEEE 754 revision site in 2018, describes it as "uncertain and not fully
+standardized."
 
 Comparing those bits therefore tests whether two implementations happened to make the same arbitrary
 choice, which is not the same thing as testing correctness.
@@ -113,9 +118,8 @@ CPU for a NaN, then what I was measuring was one machine's choice, not the libra
 
 The AArch64 half of that has a history. In July 2019 someone asked
 [jdk-dev](https://mail.openjdk.org/pipermail/jdk-dev/2019-July/003164.html) why
-`floatToRawIntBits(0.0f / 0.0f)` gives a different answer on x86_64 and aarch64. The question came out
-of a Spark test that had asserted `2143289344`, the canonical positive NaN. Aleksey Shipilev's reply
-was a question of his own: why should it be the same?
+`floatToRawIntBits(0.0f / 0.0f)` gives a different answer on x86_64 and aarch64. Aleksey Shipilev's
+reply was a question of his own: why should it be the same?
 
 So even inside one body of bytecode, on one JDK version, the answer depends on the CPU. A port that
 imitated the bits of one C build on one platform would pass there and fail on the next, and neither
